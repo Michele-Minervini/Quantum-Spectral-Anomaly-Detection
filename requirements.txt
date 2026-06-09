@@ -1,0 +1,6 @@
+# Runtime dependencies for the QSAD numerical experiments.
+# Tested with the versions noted in comments.
+numpy>=1.26        # tested 1.26.4
+scipy>=1.11        # tested 1.13.1
+scikit-learn>=1.3  # tested 1.4.2
+matplotlib>=3.7    # tested 3.8.4

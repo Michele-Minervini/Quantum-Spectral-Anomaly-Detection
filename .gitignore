@@ -1,4 +1,4 @@
-# Ignore LaTeX files
+# LaTeX build artifacts (paper sources kept out of the code repo)
 *.tex
 *.sty
 *.bib
@@ -6,3 +6,29 @@
 *.log
 *.aux
 *.out
+*.synctex.gz
+
+# Images are ignored by default, but keep generated experiment figures
+*.png
+!figures/*.png
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Environments
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+
+# Claude Code local settings
+.claude/settings.local.json
