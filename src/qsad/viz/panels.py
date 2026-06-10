@@ -116,7 +116,8 @@ def temperature_sweep(fig_path, h_values, q_by_T, t_values, q_hard, q_raw,
     ax.axvline(h_c, color="0.4", ls="--", lw=1.0)
     for t in t_values:
         ax.plot(h_values, q_by_T[t], color=cmap_obj(norm(t)), lw=1.6)
-    ax.plot(h_values, q_hard, color="k", ls="--", lw=2.0)
+    ax.plot(h_values, q_hard, color="k", ls="none", marker="o", ms=2.5,
+            markevery=1, zorder=5)
     ax.plot(h_values, q_raw, color="0.55", ls=":", lw=1.5)
     ax.set_xlabel("transverse field $h / J$")
     ax.set_ylabel("anomaly score $Q$")
@@ -125,7 +126,7 @@ def temperature_sweep(fig_path, h_values, q_by_T, t_values, q_hard, q_raw,
     cbar.set_label("QSAD resolution $T$")
     handles = [
         Line2D([0], [0], color=cmap_obj(0.6), lw=1.6, label=r"$Q_{QSAD}$ (varying $T$)"),
-        Line2D([0], [0], color="k", ls="--", lw=2.0, label=r"$Q_{hard}$ ($T\to0$ limit)"),
+        Line2D([0], [0], color="k", ls="none", marker="o", ms=5, label=r"$Q_{hard}$ ($T\to0$ limit)"),
         Line2D([0], [0], color="0.55", ls=":", lw=1.5, label=r"$Q_{raw}$ (naive)"),
         Line2D([0], [0], color="0.4", ls="--", lw=1.0, label=r"critical point $h_c$"),
     ]
@@ -148,7 +149,6 @@ def auc_curve(fig_path, t_values, auc_by_label, auc_raw):
             ax.fill_between(t_values, mean - std, mean + std,
                             color=line.get_color(), alpha=0.2)
     ax.axhline(auc_raw, color="0.5", ls=":", lw=1.4, label=r"$Q_{raw}$ (naive)")
-    # ax.axhline(0.5, color="0.75", ls="--", lw=0.8)
     ax.set_xscale("log")
     ax.set_xlabel("QSAD resolution $T$")
     ax.set_ylabel("detection AUC")

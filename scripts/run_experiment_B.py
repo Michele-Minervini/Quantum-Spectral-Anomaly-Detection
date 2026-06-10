@@ -25,8 +25,8 @@ RESULTS = ROOT / "results"
 J, H_A, H_B, H_C = 1.0, 0.4, 1.2, 1.0     # ordered nominal / (subtle) paramagnetic anomaly
 WEIGHTS = [0.7, 0.2, 0.1]                  # nominal mode proportions
 N_MODES = 3
-# alpha < sum of the 3 mode weights (~0.9965): retain the physical modes without
-# diving into the diffuse noise floor, which would otherwise accept anomalies.
+# alpha < the eigenvalue mass of the 3 physical modes (~0.997): retain the real
+# modes without diving into the diffuse noise floor, which would accept anomalies.
 ALPHA, T, GAMMA = 0.99, 0.1, 1e-4
 SHELLS = [1, 2, 3]
 N_TRAIN, N_TEST, NOISE = 600, 300, 0.05
