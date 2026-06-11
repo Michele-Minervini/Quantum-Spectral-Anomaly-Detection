@@ -2,24 +2,22 @@
 
 from .style import use_style
 from .panels import (
-    encoding_comparison,
+    panel_grid,
     comparison_grid,
-    score_distributions,
+    spectrum_occupations,
+    mode_profile,
     temperature_sweep,
     auc_curve,
-    sector_distributions,
     sector_temperature,
-    roc_panel,
 )
 
 __all__ = [
     "use_style",
-    "encoding_comparison",
+    "panel_grid",
     "comparison_grid",
-    "score_distributions",
+    "spectrum_occupations",
+    "mode_profile",
     "temperature_sweep",
     "auc_curve",
-    "sector_distributions",
     "sector_temperature",
-    "roc_panel",
 ]

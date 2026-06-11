@@ -1,3 +1,11 @@
-n,Q_raw,Q_hard,Q_QSAD (Gaussian),Q_QSAD (logistic),T^2
-8,0.7875,1.0000,1.0000,1.0000,0.2358
-10,0.9077,1.0000,1.0000,1.0000,0.1798
+detector,auc
+Q_raw,0.7840
+Q_hard K=2,0.7590
+Q_hard K=4,0.9417
+Q_hard K=6,0.9900
+Q_hard K=8,0.9950
+Q_hard K=10,0.9950
+Q_hard K=12,0.9950
+Q_QSAD (gaussian),0.9900
+Q_QSAD (logistic),0.9900
+T^2,0.2964

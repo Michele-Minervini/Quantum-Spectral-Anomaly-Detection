@@ -6,7 +6,11 @@
 *.log
 *.aux
 *.out
-*.synctex.gz
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex*
 
 # Images are ignored by default, but keep generated experiment figures
 *.png

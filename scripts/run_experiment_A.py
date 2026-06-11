@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIGS = ROOT / "figures"
 
 # --- experiment parameters ---
-ENCODING = "fourier"     # QSAD feature map (representative strong encoding)
+ENCODING = "fourier"     # fixed representative QSAD feature map
 ALPHA = 0.88             # retained-mass / explained-variance target
 T = 0.1                  # QSAD soft spectral resolution
 GAMMA = 1e-3             # T^2 ridge

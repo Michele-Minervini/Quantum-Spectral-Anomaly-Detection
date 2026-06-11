@@ -2,9 +2,10 @@
 
 Each map sends a batch ``X`` of shape ``(m, 2)`` to feature states of shape
 ``(m, D)`` with unit-norm rows; the feature dimension ``D`` varies by map (from
-4 up to 16) and is noted in each docstring.  Swapping maps is how Experiment A
-tests which embedding gives the cleanest curved QSAD boundary.  All maps are
-real except ``iqp``, which produces complex amplitudes.
+4 up to 16) and is noted in each docstring.  Swapping maps is how the
+classical-data experiment compares QSAD across embeddings and against the
+classical kernel-PCA baselines.  All maps are real except ``iqp``, which
+produces complex amplitudes.
 """
 
 import numpy as np

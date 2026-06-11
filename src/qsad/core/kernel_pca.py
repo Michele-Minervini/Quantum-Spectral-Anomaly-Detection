@@ -1,43 +1,49 @@
-"""Classical kernel-PCA novelty detection -- the matched nonlinear baseline.
+"""Classical kernel-PCA novelty detection -- the matched nonlinear baselines.
 
 The anomaly score is the reconstruction error in centered feature space: the
 squared distance from a test point to the top-K kernel-principal subspace
-(Hoffmann, *Pattern Recognition* 2007).  With an RBF kernel this is the
-apples-to-apples classical counterpart of QSAD on the ``rff_gaussian`` feature
-map (which approximates the same RBF kernel), so it controls for the
-feature-space dimensionality that a quantum embedding would otherwise be
-credited with.
+(Hoffmann, *Pattern Recognition* 2007).  RBF, Laplacian, and polynomial
+kernels are supported; with an RBF kernel this is the apples-to-apples
+classical counterpart of QSAD on the ``rff_gaussian`` feature map (which
+approximates the same kernel), so it controls for the feature-space
+dimensionality that a quantum embedding would otherwise be credited with.
 """
 
 import numpy as np
 from scipy.spatial.distance import pdist
-from sklearn.metrics.pairwise import rbf_kernel
+from sklearn.metrics.pairwise import laplacian_kernel, polynomial_kernel, rbf_kernel
 
 
-def median_bandwidth(X):
-    """RBF ``gamma`` from the median pairwise-distance heuristic.
+def median_bandwidth(X, metric="sqeuclidean"):
+    """Kernel ``gamma`` from the median pairwise-distance heuristic.
 
     A standard, label-free default for kernel methods, so the bandwidth is not
-    hand-tuned to favour any one method.
+    hand-tuned to favour any one method.  ``sqeuclidean`` gives the RBF
+    convention ``gamma = 1/(2 median||x - x'||^2)``; ``cityblock`` gives the
+    Laplacian convention ``gamma = 1/median||x - x'||_1``.
     """
-    sq = pdist(np.asarray(X, dtype=float), metric="sqeuclidean")
-    return float(1.0 / (2.0 * np.median(sq)))
+    d = pdist(np.asarray(X, dtype=float), metric=metric)
+    med = float(np.median(d))
+    return 1.0 / (2.0 * med) if metric == "sqeuclidean" else 1.0 / med
 
 
 class KernelPCANovelty:
-    """RBF kernel-PCA reconstruction-error detector fitted on nominal ``X``.
+    """Kernel-PCA reconstruction-error detector fitted on nominal ``X``.
 
-    The retained rank is chosen by an explained-variance target ``alpha``, the
-    same criterion QSAD uses for retained mass, so the two are matched.
+    ``kernel`` selects an RBF, Laplacian, or polynomial kernel.  The retained
+    rank is chosen by an explained-variance target ``alpha``, the same
+    criterion QSAD uses for retained mass, so the two are matched.
     """
 
-    def __init__(self, X, gamma=4.0, alpha=0.9, center=True):
+    def __init__(self, X, gamma=4.0, alpha=0.9, center=True, kernel="rbf",
+                 degree=3, coef0=1.0):
         self.X = np.asarray(X, dtype=float)
-        self.gamma = gamma
+        self.gamma, self.degree, self.coef0 = gamma, degree, coef0
+        self.kernel = kernel
         self.center = center
         N = len(self.X)
 
-        K = rbf_kernel(self.X, gamma=gamma)               # (N, N) nominal kernel
+        K = self._gram(self.X)                            # (N, N) nominal kernel
         if center:                                        # textbook kernel PCA
             self.col_mean = K.mean(axis=0)
             self.all_mean = K.mean()
@@ -55,17 +61,35 @@ class KernelPCANovelty:
         self.lam = w[:self.n_comp]
         self.alphas = V[:, :self.n_comp]                  # component directions
 
+    def _gram(self, Z):
+        """Kernel matrix ``k(Z, X)`` against the training set."""
+        if self.kernel == "rbf":
+            return rbf_kernel(Z, self.X, gamma=self.gamma)
+        if self.kernel == "laplacian":
+            return laplacian_kernel(Z, self.X, gamma=self.gamma)
+        if self.kernel == "poly":
+            return polynomial_kernel(Z, self.X, degree=self.degree,
+                                     gamma=self.gamma, coef0=self.coef0)
+        raise ValueError(f"unknown kernel: {self.kernel!r}")
+
+    def _self_kernel(self, Z):
+        """Diagonal ``k(z, z)`` for each row of ``Z``."""
+        if self.kernel == "poly":
+            return (self.gamma * (Z * Z).sum(axis=1) + self.coef0) ** self.degree
+        return np.ones(len(Z))                            # RBF/Laplacian: k(z,z) = 1
+
     def _project(self, Z):
         """Return projections onto the retained PCs and the feature-space norm^2."""
         Z = np.atleast_2d(Z)
-        Kz = rbf_kernel(Z, self.X, gamma=self.gamma)      # (m, N)
+        Kz = self._gram(Z)                                # (m, N)
+        kzz = self._self_kernel(Z)
         if self.center:
             Kz_c = (Kz - Kz.mean(axis=1, keepdims=True)
                     - self.col_mean[None, :] + self.all_mean)
-            norm2 = 1.0 - 2.0 * Kz.mean(axis=1) + self.all_mean
+            norm2 = kzz - 2.0 * Kz.mean(axis=1) + self.all_mean
         else:
             Kz_c = Kz
-            norm2 = np.ones(Kz.shape[0])                  # ||phi(z)||^2 = k(z,z) = 1
+            norm2 = kzz
         proj = (Kz_c @ self.alphas) / np.sqrt(self.lam)
         return proj, norm2
 

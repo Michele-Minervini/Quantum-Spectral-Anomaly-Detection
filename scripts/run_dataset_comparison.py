@@ -38,6 +38,7 @@ RESULTS = ROOT / "results"
 
 ALPHA, T, K_PCA, RES = 0.90, 0.05, 1, 200
 CONV_DIMS = [16, 64, 256]   # rff feature dimensions (4, 6, 8 qubits)
+REPRESENTATIVE = "fourier"  # fixed representative map shown in the main text
 
 
 def split(dataset_fn):
@@ -124,14 +125,11 @@ def main():
     print("=> QSAD on classical data IS kernel PCA; the gap at few qubits is "
           "finite-encoding resolution, not a quantum advantage.")
 
-    encs = [m for m in methods if m.startswith("QSAD/")]
-    best = max(encs, key=lambda m: np.mean([results[d][m] for d in DATASETS]))
-    print(f"\nBest QSAD encoding by mean AUC: {best.split('/')[1]}")
-
-    # Montage: linear PCA vs strong classical kernel PCA vs best QSAD kernel.
+    # Montage: linear PCA vs classical kernel PCA vs QSAD with the fixed
+    # representative map used in the main text.
     cols = list(DATASETS)
-    rows = ["Classical PCA", "Classical KPCA", best]
-    labels = ["Classical PCA", "Classical KPCA (RBF)", f"QSAD ({best.split('/')[1]})"]
+    rows = ["Classical PCA", "Classical KPCA", f"QSAD/{REPRESENTATIVE}"]
+    labels = ["Classical PCA", "Classical KPCA (RBF)", f"QSAD ({REPRESENTATIVE})"]
     montage = [[grids[d][r] for d in cols] for r in rows]
     col_data = [data[d][0] for d in cols]
     comparison_grid(FIGS / "dataset_comparison.png", montage, xs, ys,

@@ -1,9 +1,13 @@
 """Experiment B: quantum-native anomaly detection on the TFIM.
 
-Nominal (parameter set A) = a 70/20/10 mixture of the low-energy eigenstates of
-a TFIM deep in the ordered phase.  Anomalies (parameter set B) = low-energy
-states of a TFIM in the paramagnetic phase.  Reports ROC-AUC for the QSAD
-support detectors and a score-vs-field diagnostic across the critical point.
+Nominal = the M lowest eigenstates of an ordered-phase TFIM populated with
+geometrically decreasing weights (a thermal-like occupation), so the nominal
+spectrum is graded and crosses the 1/N sampling resolution inside the ladder:
+no rank K is privileged.  Anomalies = low-energy states of the paramagnetic
+phase just across the critical point.  The experiment compares the calibrated
+soft detector (one retained-mass target alpha) against hard top-K projectors
+across K, against the naive density-weighted overlap, and across the quantum
+phase transition.
 """
 
 import csv
@@ -11,96 +15,111 @@ from pathlib import Path
 
 import numpy as np
 
-from qsad.core import GAUSSIAN, LOGISTIC, SpectralDetector, roc_auc, roc_points
+from qsad.core import GAUSSIAN, LOGISTIC, SpectralDetector, roc_auc
 from qsad.core import statistics as stats
 from qsad.models import low_energy_states, perturbed_samples, tfim_hamiltonian
-from qsad.viz import (auc_curve, roc_panel, score_distributions,
-                      sector_distributions, sector_temperature, temperature_sweep)
+from qsad.viz import (auc_curve, mode_profile, sector_temperature,
+                      spectrum_occupations, temperature_sweep)
 
 ROOT = Path(__file__).resolve().parents[1]
 FIGS = ROOT / "figures"
 RESULTS = ROOT / "results"
 
 # --- parameters ---
-J, H_A, H_B, H_C = 1.0, 0.4, 1.2, 1.0     # ordered nominal / (subtle) paramagnetic anomaly
-WEIGHTS = [0.7, 0.2, 0.1]                  # nominal mode proportions
-N_MODES = 3
-# alpha < the eigenvalue mass of the 3 physical modes (~0.997): retain the real
-# modes without diving into the diffuse noise floor, which would accept anomalies.
-ALPHA, T, GAMMA = 0.99, 0.1, 1e-4
+N_SPINS = 10
+J, H_A, H_B, H_C = 1.0, 0.4, 1.2, 1.0    # ordered nominal / near-critical anomaly
+M_LADDER = 12                # nominal ladder depth
+LADDER_RATIO = 0.5           # thermal-like mode weights w_j ~ ratio^j
+ANOM_WEIGHTS = [0.7, 0.2, 0.1]
+ALPHA, T_MAIN, GAMMA = 0.99, 3e-3, 1e-4
 SHELLS = [1, 2, 3]
 N_TRAIN, N_TEST, NOISE = 600, 300, 0.05
-SIZES = [8, 10]
-T_SWEEP = list(np.geomspace(0.3, 0.004, 7))   # log-spaced resolutions, soft -> sharp
+T_FAMILY = [3e-2, 1e-2, 3e-3, 1e-3]      # soft -> sharp
+K_SWEEP = [2, 4, 6, 8, 10, 12]
+K_SHOW = [4, 6, 8]           # hard ranks displayed in the mode profile
+RARE_MODE = 5                # 0-based index of the rare-but-valid demo sector
 
 
-def build_size(n):
-    """Train the detector and score a nominal-vs-anomaly test set for size n."""
-    modes_A = low_energy_states(tfim_hamiltonian(n, J, H_A), N_MODES)
-    modes_B = low_energy_states(tfim_hamiltonian(n, J, H_B), N_MODES)
+def k_alpha(det, alpha):
+    """Explained-variance rank: smallest K whose cumulative mass reaches alpha."""
+    frac = np.cumsum(det.eigvals) / det.eigvals.sum()
+    return int(np.searchsorted(frac, alpha) + 1)
 
-    train = perturbed_samples(modes_A, WEIGHTS, N_TRAIN, NOISE, seed=1)
-    nominal = perturbed_samples(modes_A, WEIGHTS, N_TEST, NOISE, seed=2)
-    anomaly = perturbed_samples(modes_B, WEIGHTS, N_TEST, NOISE, seed=3)
-    test = np.vstack([nominal, anomaly])
-    labels = np.r_[np.zeros(N_TEST), np.ones(N_TEST)]
+
+def build():
+    """Train the detector on the graded ladder and assemble all test sets."""
+    modes = low_energy_states(tfim_hamiltonian(N_SPINS, J, H_A), M_LADDER)
+    weights = LADDER_RATIO ** np.arange(M_LADDER, dtype=float)
+    weights /= weights.sum()
+    amodes = low_energy_states(tfim_hamiltonian(N_SPINS, J, H_B), len(ANOM_WEIGHTS))
+
+    train = perturbed_samples(modes, weights, N_TRAIN, NOISE, seed=1)
+    nominal = perturbed_samples(modes, weights, 2 * N_TEST, NOISE, seed=2)
+    anomaly = perturbed_samples(amodes, ANOM_WEIGHTS, N_TEST, NOISE, seed=3)
+    per_mode = [perturbed_samples(modes[[j]], [1.0], N_TEST, NOISE, seed=10 + j)
+                for j in range(M_LADDER)]
 
     detectors = {r.name: SpectralDetector.from_states(train, response=r)
                  for r in (GAUSSIAN, LOGISTIC)}
-    mus = {name: d.calibrate_mu(ALPHA, T) for name, d in detectors.items()}
-    det = detectors["gaussian"]
-
-    mu_g = mus["gaussian"]
-    scores = {
-        "Q_raw": stats.raw_scores(det, test),
-        "Q_hard": stats.hard_scores(det, test, N_MODES),
-        "Q_QSAD (Gaussian)": stats.q_scores(det, test, mu_g, T),
-        "Q_QSAD (logistic)": stats.q_scores(detectors["logistic"], test,
-                                            mus["logistic"], T),
-        "T^2": stats.t2_scores(det, test, T, SHELLS, GAMMA),
-    }
-    aucs = {name: roc_auc(labels, s) for name, s in scores.items()}
-
-    # Per-sector groups: dominant nominal mode (70%), rare nominal mode (10%),
-    # and the anomaly.  Q_raw over-penalizes the rare-but-valid sector.
-    dominant = perturbed_samples(modes_A[[0]], [1.0], N_TEST, NOISE, seed=4)
-    rare = perturbed_samples(modes_A[[2]], [1.0], N_TEST, NOISE, seed=5)
-    sectors = {
-        "$Q_{raw}$": [stats.raw_scores(det, g) for g in (dominant, rare, anomaly)],
-        "$Q_{QSAD}$": [stats.q_scores(det, g, mu_g, T)
-                       for g in (dominant, rare, anomaly)],
-    }
-    return {"n": n, "det": det, "mu": mu_g, "scores": scores, "labels": labels,
-            "test": test, "aucs": aucs, "eigvals": det.eigvals, "sectors": sectors}
+    return {"modes": modes, "weights": weights, "train": train,
+            "nominal": nominal, "anomaly": anomaly, "per_mode": per_mode,
+            "det": detectors["gaussian"], "detectors": detectors}
 
 
-def field_sweep(info, hs):
-    """Score the TFIM ground state vs transverse field with a fixed detector."""
-    det, mu, n = info["det"], info["mu"], info["n"]
-    raw, hard, qsad = [], [], []
-    for h in hs:
-        gs = low_energy_states(tfim_hamiltonian(n, J, h), 1)
-        raw.append(stats.raw_scores(det, gs)[0])
-        hard.append(stats.hard_scores(det, gs, N_MODES)[0])
-        qsad.append(stats.q_scores(det, gs, mu, T)[0])
-    # Order so the dashed Q_hard is drawn last (it coincides with Q_QSAD).
-    return {"$Q_{raw}$": np.array(raw), "$Q_{QSAD}$": np.array(qsad),
-            "$Q_{hard}$": np.array(hard)}
+def auc_table(info):
+    """ROC-AUC of every detector on the nominal-mixture vs anomaly pool."""
+    det, nominal, anomaly = info["det"], info["nominal"], info["anomaly"]
+    pool = np.vstack([nominal, anomaly])
+    labels = np.r_[np.zeros(len(nominal)), np.ones(len(anomaly))]
+    out = {"Q_raw": roc_auc(labels, stats.raw_scores(det, pool))}
+    for K in K_SWEEP:
+        out[f"Q_hard K={K}"] = roc_auc(labels, stats.hard_scores(det, pool, K))
+    for name, d in info["detectors"].items():
+        mu = d.calibrate_mu(ALPHA, T_MAIN)
+        out[f"Q_QSAD ({name})"] = roc_auc(labels, stats.q_scores(d, pool, mu, T_MAIN))
+    out["T^2"] = roc_auc(labels, stats.t2_scores(det, pool, T_MAIN, SHELLS, GAMMA))
+    return out
 
 
-def field_sweep_temperatures(info, hs, t_values):
+def mode_profiles(info):
+    """Per-mode mean scores for the hard ranks and the soft T family."""
+    det, per_mode, anomaly = info["det"], info["per_mode"], info["anomaly"]
+    hard = {K: np.array([stats.hard_scores(det, g, K).mean() for g in per_mode])
+            for K in K_SHOW}
+    anom_hard = {K: stats.hard_scores(det, anomaly, K).mean() for K in K_SHOW}
+    soft, anom_soft = {}, {}
+    for t in T_FAMILY:
+        mu = det.calibrate_mu(ALPHA, t)
+        soft[t] = np.array([stats.q_scores(det, g, mu, t).mean() for g in per_mode])
+        anom_soft[t] = stats.q_scores(det, anomaly, mu, t).mean()
+    return hard, soft, anom_hard, anom_soft
+
+
+def sector_scores(info, k_values):
+    """Mean scores on the dominant / rare / anomaly sectors."""
+    det = info["det"]
+    groups = [info["per_mode"][0], info["per_mode"][RARE_MODE], info["anomaly"]]
+    q_raw = np.array([stats.raw_scores(det, g).mean() for g in groups])
+    q_hard = {K: np.array([stats.hard_scores(det, g, K).mean() for g in groups])
+              for K in k_values}
+    q_soft = {t: np.array([stats.q_scores(det, g, det.calibrate_mu(ALPHA, t), t).mean()
+                           for g in groups]) for t in T_FAMILY}
+    return q_raw, q_hard, q_soft
+
+
+def field_sweep_temperatures(info, hs, k_hard):
     """Score the TFIM ground state across fields at several resolutions T.
 
-    Ground states are T-independent, so they are computed once; only mu and the
-    occupations change with T.  Returns ({T: Q array}, Q_hard, Q_raw); as T -> 0
-    the QSAD curves converge to Q_hard.
+    Ground states are T-independent, so they are computed once; only mu and
+    the occupations change with T.  Returns ({T: Q array}, Q_hard, Q_raw).
     """
-    det, n = info["det"], info["n"]
-    gs = np.array([low_energy_states(tfim_hamiltonian(n, J, h), 1)[0] for h in hs])
-    q_hard = stats.hard_scores(det, gs, N_MODES)
+    det = info["det"]
+    gs = np.array([low_energy_states(tfim_hamiltonian(N_SPINS, J, h), 1)[0]
+                   for h in hs])
+    q_hard = stats.hard_scores(det, gs, k_hard)
     q_raw = stats.raw_scores(det, gs)
     q_by_T = {t: stats.q_scores(det, gs, det.calibrate_mu(ALPHA, t), t)
-              for t in t_values}
+              for t in T_FAMILY}
     return q_by_T, q_hard, q_raw
 
 
@@ -111,9 +130,12 @@ def auc_vs_temperature(info, t_values, shot_counts, n_draws=25, seed=0):
     add binomial noise to the score -- a sharper (smaller T) detector is more
     robust to it.  Returns ``{label: (mean, std_or_None)}``.
     """
-    det, test, labels = info["det"], info["test"], info["labels"]
-    pops = np.abs(test @ det.eigvecs.conj()) ** 2
-    acc = {t: pops @ det.occupations(det.calibrate_mu(ALPHA, t), t) for t in t_values}
+    det = info["det"]
+    pool = np.vstack([info["nominal"], info["anomaly"]])
+    labels = np.r_[np.zeros(len(info["nominal"])), np.ones(len(info["anomaly"]))]
+    pops = np.abs(pool @ det.eigvecs.conj()) ** 2
+    acc = {t: pops @ det.occupations(det.calibrate_mu(ALPHA, t), t)
+           for t in t_values}
     out = {r"$\infty$ shots": (np.array([roc_auc(labels, 1.0 - acc[t])
                                          for t in t_values]), None)}
     rng = np.random.default_rng(seed)
@@ -124,102 +146,76 @@ def auc_vs_temperature(info, t_values, shot_counts, n_draws=25, seed=0):
     return out
 
 
-def sector_temperatures(info, t_values):
-    """Mean Q_raw and Q_QSAD(T) for the three sectors (dominant/rare/anomaly)."""
-    det, n = info["det"], info["n"]
-    modes_A = low_energy_states(tfim_hamiltonian(n, J, H_A), N_MODES)
-    modes_B = low_energy_states(tfim_hamiltonian(n, J, H_B), N_MODES)
-    groups = [perturbed_samples(modes_A[[0]], [1.0], N_TEST, NOISE, seed=4),
-              perturbed_samples(modes_A[[2]], [1.0], N_TEST, NOISE, seed=5),
-              perturbed_samples(modes_B, WEIGHTS, N_TEST, NOISE, seed=3)]
-    q_raw = np.array([stats.raw_scores(det, g).mean() for g in groups])
-    q_qsad = {t: np.array([stats.q_scores(det, g, det.calibrate_mu(ALPHA, t), t).mean()
-                           for g in groups]) for t in t_values}
-    return q_raw, q_qsad
-
-
 def main():
-    runs = {n: build_size(n) for n in SIZES}
+    info = build()
+    det, weights = info["det"], info["weights"]
+    k99 = k_alpha(det, ALPHA)
+
+    print("Experiment B: graded nominal ladder (n=%d spins)" % N_SPINS)
+    print("mode weights x N_train:",
+          " ".join(f"{w * N_TRAIN:.0f}" for w in weights))
+    print("C eigenvalues:", " ".join(f"{v:.1e}" for v in det.eigvals[:M_LADDER + 2]))
+    print(f"sampling resolution 1/N = {1 / N_TRAIN:.1e}")
+    for a in (0.95, 0.98, 0.99, 0.995):
+        print(f"  explained-variance rank K({a}) = {k_alpha(det, a)}")
 
     # --- ROC-AUC table ---
-    detector_names = list(runs[SIZES[0]]["aucs"])
-    print("Experiment B: ROC-AUC (label 1 = paramagnetic-phase anomaly)\n")
-    header = f"{'n':>3} | " + " | ".join(f"{d:>17}" for d in detector_names)
-    print(header)
-    print("-" * len(header))
+    aucs = auc_table(info)
     RESULTS.mkdir(exist_ok=True)
     with open(RESULTS / "experiment_B_auc.csv", "w", newline="") as fh:
         writer = csv.writer(fh)
-        writer.writerow(["n"] + detector_names)
-        for n in SIZES:
-            row = [runs[n]["aucs"][d] for d in detector_names]
-            writer.writerow([n] + [f"{a:.4f}" for a in row])
-            print(f"{n:>3} | " + " | ".join(f"{a:>17.4f}" for a in row))
+        writer.writerow(["detector", "auc"])
+        print("\nROC-AUC (nominal mixture vs near-critical anomaly):")
+        for name, auc in aucs.items():
+            writer.writerow([name, f"{auc:.4f}"])
+            print(f"  {name:<18} {auc:.4f}")
 
-    big = runs[SIZES[-1]]
-    det, mu = big["det"], big["mu"]
-    print("\nNominal mixture C leading eigenvalues (n=%d): %s"
-          % (big["n"], np.round(big["eigvals"][:6], 4)))
-    print("QSAD: alpha=%g, T=%g, mu=%.6f, occupations=%s"
-          % (ALPHA, T, mu, np.round(det.occupations(mu, T)[:6], 3)))
+    # --- per-mode profile: hard top-K vs the soft family ---
+    hard, soft, anom_hard, anom_soft = mode_profiles(info)
+    counts = [f"{w * N_TRAIN:.0f}" for w in weights]
+    mode_profile(FIGS / "experiment_B_mode_profile.png", hard, soft, T_FAMILY,
+                 anom_hard, anom_soft, counts)
 
-    # --- per-sector mean scores: the rare-but-valid sector ---
-    sector_labels = ["dominant nominal (70%)", "rare nominal (10%)", "anomaly"]
-    print("\nMean anomaly score by sector (n=%d):" % big["n"])
-    print(f"{'detector':>12} | " + " | ".join(f"{s:>22}" for s in sector_labels))
-    for name, groups in big["sectors"].items():
-        means = " | ".join(f"{np.mean(g):>22.3f}" for g in groups)
-        print(f"{name.strip('$'):>12} | {means}")
-    print("Q_raw flags the rare valid sector as strongly as the anomaly;"
-          " Q_QSAD keeps it nominal.")
-    print("T^2 is a within-support leverage diagnostic, so it does not separate"
-          " out-of-support anomalies.")
+    print(f"\nRare-but-valid mode m{RARE_MODE + 1} "
+          f"(weight {weights[RARE_MODE]:.3f}, "
+          f"~{weights[RARE_MODE] * N_TRAIN:.0f} training samples):")
+    for K in K_SHOW:
+        print(f"  Q_hard K={K}: {hard[K][RARE_MODE]:.2f}"
+              f"   (anomaly: {anom_hard[K]:.2f})")
+    for t in T_FAMILY:
+        print(f"  Q_QSAD T={t:g}: {soft[t][RARE_MODE]:.2f}"
+              f"   (anomaly: {anom_soft[t]:.2f})")
 
-    # --- figures: phase sweep, per-sector violins, ROC ---
-    hs = np.linspace(0.05, 2.0, 60)
-    score_distributions(FIGS / "experiment_B_sweep.png", hs, field_sweep(big, hs),
-                        H_C, train_band=(H_A - 0.06, H_A + 0.06),
-                        styles={"$Q_{hard}$": "--"})
+    # --- spectrum with soft occupations and the hard cutoff ---
+    occ = {t: det.occupations(det.calibrate_mu(ALPHA, t), t) for t in T_FAMILY}
+    spectrum_occupations(FIGS / "experiment_B_spectrum.png", det.eigvals, occ,
+                         T_FAMILY, k99, N_TRAIN)
 
-    # Temperature sweep: QSAD across the transition at several T, converging to
-    # the hard projector as T -> 0 (the sharp-limit M -> P_K).
-    q_by_T, q_hard_sw, q_raw_sw = field_sweep_temperatures(big, hs, T_SWEEP)
-    temperature_sweep(FIGS / "experiment_B_temperature_sweep.png", hs, q_by_T,
-                      T_SWEEP, q_hard_sw, q_raw_sw, H_C,
-                      train_band=(H_A - 0.06, H_A + 0.06))
-
-    # (a) detection AUC vs resolution T, at infinite and finite measurement shots
-    t_auc = list(np.geomspace(0.005, 3.0, 12))
-    auc_curve(FIGS / "experiment_B_auc_vs_T.png", t_auc,
-              auc_vs_temperature(big, t_auc, [200, 50, 20]), big["aucs"]["Q_raw"])
-
-    # combined sectors: Q_raw bar + Q_QSAD bars at several temperatures
-    t_sect = list(np.geomspace(0.3, 0.004, 5))
-    q_raw_s, q_qsad_s = sector_temperatures(big, t_sect)
+    # --- sectors: dominant / rare / anomaly, raw vs hard vs soft ---
+    q_raw_s, q_hard_s, q_soft_s = sector_scores(info, k_values=[4, 6])
     sector_temperature(FIGS / "experiment_B_sectors_temperature.png",
-                       ["dominant\nnominal\n(70%)", "rare\nnominal\n(10%)",
-                        "anomaly\n(phase B)"], q_raw_s, q_qsad_s, t_sect)
+                       [f"dominant\nnominal\n({weights[0]:.0%})",
+                        f"rare\nnominal\n({weights[RARE_MODE]:.1%})",
+                        "anomaly\n(paramagnetic)"],
+                       q_raw_s, q_soft_s, T_FAMILY, q_hard_by_K=q_hard_s)
 
-    sector_distributions(FIGS / "experiment_B_sectors.png", big["sectors"],
-                         ["dominant\nnominal\n(70%)", "rare\nnominal\n(10%)",
-                          "anomaly\n(phase B)"],
-                         group_colors=["#4c72b0", "#4c72b0", "#c44e52"])
+    # --- phase sweep at several resolutions ---
+    hs = np.linspace(0.05, 2.0, 60)
+    q_by_T, q_hard_sw, q_raw_sw = field_sweep_temperatures(info, hs, k99)
+    temperature_sweep(FIGS / "experiment_B_temperature_sweep.png", hs, q_by_T,
+                      T_FAMILY, q_hard_sw, q_raw_sw, H_C,
+                      train_band=(H_A - 0.02, H_A + 0.02))
 
-    # ROC at the smaller size, where Q_raw is visibly imperfect.
-    small = runs[SIZES[0]]
-    roc_curves = {}
-    for name in ["Q_raw", "Q_hard", "Q_QSAD (Gaussian)"]:
-        fpr, tpr = roc_points(small["labels"], small["scores"][name])
-        roc_curves[name] = (fpr, tpr, small["aucs"][name])
-    roc_panel(FIGS / "experiment_B_roc.png", roc_curves)
+    # --- detection AUC vs resolution T at finite measurement shots ---
+    t_auc = list(np.geomspace(3e-4, 1e-1, 12))
+    auc_curve(FIGS / "experiment_B_auc_vs_T.png", t_auc,
+              auc_vs_temperature(info, t_auc, [200, 50, 20]), aucs["Q_raw"])
 
-    print(f"\nsaved -> {FIGS/'experiment_B_sweep.png'}")
-    print(f"saved -> {FIGS/'experiment_B_temperature_sweep.png'}")
-    print(f"saved -> {FIGS/'experiment_B_auc_vs_T.png'}")
-    print(f"saved -> {FIGS/'experiment_B_sectors.png'}")
-    print(f"saved -> {FIGS/'experiment_B_sectors_temperature.png'}")
-    print(f"saved -> {FIGS/'experiment_B_roc.png'} (n={small['n']})")
-    print(f"saved -> {RESULTS/'experiment_B_auc.csv'}")
+    for name in ("experiment_B_mode_profile", "experiment_B_spectrum",
+                 "experiment_B_sectors_temperature",
+                 "experiment_B_temperature_sweep", "experiment_B_auc_vs_T"):
+        print(f"saved -> {FIGS / (name + '.png')}")
+    print(f"saved -> {RESULTS / 'experiment_B_auc.csv'}")
 
 
 if __name__ == "__main__":

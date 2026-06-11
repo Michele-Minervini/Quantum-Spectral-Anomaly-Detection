@@ -1,0 +1,19 @@
+dataset,method,auc_raw,auc_centered,delta
+blob,KPCA rbf,0.9346,0.9346,+0.0000
+blob,KPCA laplacian,0.9357,0.9357,+0.0000
+blob,KPCA poly,0.9259,0.9026,-0.0232
+blob,QSAD fourier,0.9277,0.9277,+0.0000
+blob,QSAD rff_gaussian,0.9130,0.9086,-0.0045
+blob,QSAD poly2,0.9006,0.9103,+0.0098
+moon,KPCA rbf,0.8741,0.8741,+0.0000
+moon,KPCA laplacian,0.9133,0.9133,+0.0000
+moon,KPCA poly,0.8109,0.8147,+0.0038
+moon,QSAD fourier,0.8754,0.8754,+0.0000
+moon,QSAD rff_gaussian,0.7269,0.7559,+0.0289
+moon,QSAD poly2,0.7606,0.6891,-0.0715
+ring,KPCA rbf,0.8199,0.8199,+0.0000
+ring,KPCA laplacian,0.8759,0.8759,+0.0000
+ring,KPCA poly,0.6957,0.6846,-0.0110
+ring,QSAD fourier,0.8834,0.8834,+0.0000
+ring,QSAD rff_gaussian,0.6354,0.6416,+0.0063
+ring,QSAD poly2,0.6783,0.5841,-0.0942

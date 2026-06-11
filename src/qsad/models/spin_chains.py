@@ -54,9 +54,11 @@ def heisenberg_hamiltonian(n, J=1.0, delta=1.0, periodic=False):
 
 
 def low_energy_states(H, k):
-    """Return the ``k`` lowest eigenstates of ``H`` as rows of a real array."""
-    _, vecs = eigsh(H, k=k, which="SA")
-    return np.ascontiguousarray(vecs.T.real)        # (k, dim)
+    """Return the ``k`` lowest eigenstates of ``H`` as rows of a real array,
+    sorted by ascending energy."""
+    vals, vecs = eigsh(H, k=k, which="SA")
+    order = np.argsort(vals)
+    return np.ascontiguousarray(vecs[:, order].T.real)        # (k, dim)
 
 
 def perturbed_samples(modes, weights, n_samples, noise=0.02, seed=0):

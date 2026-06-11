@@ -27,7 +27,7 @@ src/qsad/
   core/      responses · detector · statistics (Q, T²) · classical_pca · kernel_pca · calibration
   models/    datasets (blob/moon/ring) · encodings (6 feature maps) · spin_chains (TFIM)
   viz/       shared style · figure builders
-scripts/     run_experiment_A.py · run_experiment_B.py · run_encoding_comparison.py · run_dataset_comparison.py
+scripts/     run_experiment_A.py · run_experiment_B.py · run_kernel_encoding_comparison.py · run_dataset_comparison.py · run_centering_check.py
 figures/     generated figures
 results/     generated tables (CSV)
 ```
@@ -52,9 +52,10 @@ headless machine, set `MPLBACKEND=Agg`.
 ### A — Curved boundaries (classical data via quantum feature states)
 
 ```bash
-python scripts/run_experiment_A.py            # the 3x3 headline grid
-python scripts/run_encoding_comparison.py     # 6 feature maps on one dataset
-python scripts/run_dataset_comparison.py      # PCA vs kernel-PCA vs QSAD
+python scripts/run_experiment_A.py                  # the 3x3 headline grid
+python scripts/run_kernel_encoding_comparison.py    # classical kernels vs QSAD maps
+python scripts/run_dataset_comparison.py            # PCA vs kernel-PCA vs QSAD
+python scripts/run_centering_check.py               # input-centering sensitivity
 ```
 
 A one-class moon cloud in `[0,1]²` is embedded into a quantum feature state. The
@@ -70,8 +71,22 @@ weight different within-support directions).
 ![Experiment A](figures/experiment_A_grid.png)
 
 **Encodings** (`qsad.models.encodings`, all swappable): `poly_amplitude`,
-`angle`, `iqp`, `poly2`, `fourier`, `rff_gaussian`. The `fourier` map gives the
-cleanest boundary and the highest AUC; `iqp` is expressive but fragmented.
+`angle`, `iqp`, `poly2`, `fourier`, `rff_gaussian`. The `fourier` map is used in
+the headline grid as a fixed representative, not as the winner of an encoding
+search. Kernel choice is data-dependent for classical and quantum methods alike:
+`run_kernel_encoding_comparison.py` puts three classical kernel-PCA baselines
+(polynomial, RBF, Laplacian) next to three QSAD maps (`poly2`, `rff_gaussian`,
+`fourier`) on the moon — no kernel wins everywhere, a suitable quantum map
+adapts to the geometry the way a suitable classical kernel does, and the
+polynomial kernel is mediocre on both sides.
+
+![Kernels vs encodings](figures/kernel_encoding_comparison.png)
+
+**Centering**: linear PCA and the kernel baselines center in the standard way
+(input mean / Gram double-centering). Re-centering the raw inputs with the
+training mean before the kernels or maps is immaterial for the shift-invariant
+kernels and small for the polynomial ones — `run_centering_check.py`
+reproduces the sensitivity table.
 
 **Datasets** (`qsad.models.datasets`): a fairness suite spanning linear PCA's
 range — `gaussian_blob` (PCA-friendly), `moon` (curved), `ring` (PCA fails: its
@@ -107,34 +122,43 @@ python scripts/run_experiment_B.py
 ```
 
 The data are genuinely quantum states, with no classical embedding. The nominal
-source is a 70/20/10 mixture of the low-energy eigenstates of a transverse-field
-Ising model (`n = 8` and `10` spins; figures for `n = 10`) deep in the **ordered
-phase** (`h_A = 0.4`); anomalies are states from the **paramagnetic phase** just
-past the critical point (`h_B = 1.2`, a deliberately stringent near-critical
-anomaly). The nominal mixture eigenvalues recover the mode weights
-(`≈ 0.70, 0.19, 0.10`).
+source populates the low-energy ladder of an ordered-phase transverse-field
+Ising model (`n = 10` spins, `h_A = 0.4`) with **geometrically decreasing
+weights** `w_j ∝ 2^-j` over `M = 12` modes — a thermal-like occupation, so the
+nominal spectrum is *graded* and crosses the `1/N` sampling resolution inside
+the ladder: there are modes with hundreds of training samples, a handful, one,
+and none, and **no spectral gap singles out a "correct" rank `K`** (the
+explained-variance rule maps `α ∈ [0.95, 0.995]` to `K = 5…8`). Anomalies are
+states from the **paramagnetic phase** just past the critical point
+(`h_B = 1.2`, deliberately stringent).
 
-**Softness is a feature, not an approximation.** QSAD is calibrated by a single
-retained-mass target `α = 0.99` at a soft resolution; `T` is a tunable knob, and
-`T → 0` recovers the hard spectral projector but is *not* a preferred operating
-point.
+**Soft vs hard, the point of the experiment.** A hard top-`K` projector is
+binary: the rare-but-valid 1.6% mode (9 training samples) is scored *fully
+anomalous* at `K = 4` (mean `1.00` — above the anomaly itself at `0.45`) and
+*fully normal* at `K = 6` (`0.00`); past the sampling floor (`K = 8`) the
+estimated eigenvectors mix and the hard score mislabels modes erratically. The
+calibrated soft detector — one retained-mass target `α = 0.99`, no rank choice
+— grades the same ladder monotonically (rare mode `0.02`, anomaly `0.40` at
+`T = 3e-3`) and reaches AUC `0.990`, within half a point of the best
+a-posteriori rank (`0.995`, `K ≥ 8`) and far above low ranks (`0.94` at `K = 4`,
+`0.76` at `K = 2`).
 
 | figure | what it shows |
 |---|---|
-| `experiment_B_temperature_sweep.png`   | `Q` vs field `h` at several `T` — rises across the critical point; the soft family converges to the hard projector `Q_hard` as `T → 0` |
-| `experiment_B_sectors_temperature.png` | per-sector scores (`Q_raw` vs `Q_QSAD` at several `T`): naive `Q_raw` flags the rare-but-valid sector, QSAD keeps it nominal |
-| `experiment_B_auc_vs_T.png`            | detection AUC vs `T` at finite measurement shots — a sharper (small-`T`) detector is far more shot-robust |
+| `experiment_B_spectrum.png`            | the graded nominal spectrum crossing `1/N`, the hard cutoff `K(α) = 7`, and the soft occupations that weight the tail instead of cutting it |
+| `experiment_B_mode_profile.png`        | mean score per nominal mode: hard `K` flips whole valid modes 0 → 1 (and zigzags past the sampling floor); soft grades them by rarity |
+| `experiment_B_sectors_temperature.png` | dominant / rare / anomaly sectors: `Q_raw` *and* hard `K = 4` invert rare vs anomaly; soft keeps the rare sector below the anomaly |
+| `experiment_B_temperature_sweep.png`   | `Q` vs field `h` at several `T` — rises across the critical point; converges to the hard projector at `K(α)` as `T → 0` |
+| `experiment_B_auc_vs_T.png`            | detection AUC vs `T` at finite shots — small `T` is shot-robust; `T` larger than the tail spacing degrades even at `∞` shots |
 
-![Temperature sweep](figures/experiment_B_temperature_sweep.png)
+![Mode profile](figures/experiment_B_mode_profile.png)
 
-**Key result.** Density-weighted `Q_raw` over-penalizes the rare-but-valid nominal
-sector (mean score `0.90`, which even *exceeds* the near-critical anomaly at
-`0.85`), so it would rank a valid state as more anomalous than the anomaly. The
-calibrated `Q_QSAD` keeps the rare sector nominal (`0.08`) while flagging the
-anomaly, at every `T`, and detection tracks the quantum phase transition with no
-order parameter supplied. (`run_experiment_B.py` also emits the simpler single-`T`
-`experiment_B_sweep.png`, `experiment_B_sectors.png`, `experiment_B_roc.png`, and
-`experiment_B_auc.csv`.)
+**Resolution choice.** `T` must resolve the spectral scale of the graded tail
+(too-large `T` over-retains it), while smaller `T` costs nothing here and is
+more robust to measurement-shot noise — the two sides of the resolution knob.
+Detection tracks the quantum phase transition with no order parameter supplied.
+(`run_experiment_B.py` also writes `experiment_B_auc.csv` with the full
+detector × AUC table.)
 
 ## Reference
 
