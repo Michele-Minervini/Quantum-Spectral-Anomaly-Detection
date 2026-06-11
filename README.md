@@ -161,6 +161,3 @@ Detection tracks the quantum phase transition with no order parameter supplied.
 detector × AUC table.)
 
 ## Reference
-
-See `Qsad1.tex` for the full theoretical framework (the detector derivation,
-calibration protocols, and sharp-limit correspondence with classical `Q`/`T²`).
